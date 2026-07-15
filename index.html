@@ -478,6 +478,18 @@ function rowForCountry(rows, key) {
   return findRow(rows, key);
 }
 
+// Share of China's total exports / imports that this country represents,
+// computed using the SAME month's TOTAL row as the country's data so the
+// numerator and denominator refer to the same YTD window.
+function shareOfChina(row, year, month) {
+  if (!row || !month) return {exp: null, imp: null};
+  const total = findRow(DATA.by_country[year]?.[month] || [], "TOTAL");
+  if (!total) return {exp: null, imp: null};
+  const exp = (row.exports_ytd != null && total.exports_ytd) ? (row.exports_ytd / total.exports_ytd) * 100 : null;
+  const imp = (row.imports_ytd != null && total.imports_ytd) ? (row.imports_ytd / total.imports_ytd) * 100 : null;
+  return {exp, imp};
+}
+
 // Return the row for `key` from the most recent month of `year` that has it,
 // plus which month was used. Falls back through months in reverse order.
 function latestRowForCountry(year, key) {
@@ -545,11 +557,12 @@ function renderHome() {
 
   // Country cards (target list) — fall back per-country when the newest
   // monthly release doesn't include a country (e.g. Pakistan, GCC members
-  // are missing from GACC's June summary table).
+  // are missing from GACC's June summary table). Then sort by 2026 YTD
+  // total, largest first.
   const targetRows2026 = TARGET_COUNTRIES.map(t => {
     const lr = latestRowForCountry("2026", t.key);
     return {...t, row: lr.row, month: lr.month};
-  });
+  }).sort((a, b) => (b.row?.total_ytd || 0) - (a.row?.total_ytd || 0));
 
   const maxMonth = Math.max(...monthly2026.map(p => p.total));
 
@@ -689,13 +702,14 @@ function renderCountries() {
   const r25 = DATA.by_country["2025"]["Dec"];
 
   // Build rows for target countries + a wider list — per-country fallback for
-  // 2026 latest, since the June bulletin only lists ~30 countries.
+  // 2026 latest, since the June bulletin only lists ~30 countries. Sort by
+  // 2026 YTD total, largest first.
   const allRows = TARGET_COUNTRIES.map(t => {
     const a = rowForCountry(r24, t.key);
     const b = rowForCountry(r25, t.key);
     const lr = latestRowForCountry("2026", t.key);
     return {t, a, b, c: lr.row, cMonth: lr.month};
-  });
+  }).sort((x, y) => (y.c?.total_ytd || 0) - (x.c?.total_ytd || 0));
 
   // Full partner list — prefer the newest month's row per country and fall
   // back to earlier months where the newer bulletin didn't include them
@@ -720,6 +734,7 @@ function renderCountries() {
 
     <div class="card">
       <h3>Tracked partners</h3>
+      <p class="card-hint">Ordered by total 2026 YTD trade. "% of China exports/imports" is that partner's share of China's global exports/imports for the same YTD window.</p>
       <table class="data">
         <thead>
           <tr>
@@ -729,6 +744,8 @@ function renderCountries() {
             <th class="num">2025 vs 2024</th>
             <th class="num">2026 YTD (${latestM})</th>
             <th class="num">2026 YTD YoY</th>
+            <th class="num">% of China exports</th>
+            <th class="num">% of China imports</th>
           </tr>
         </thead>
         <tbody>
@@ -742,6 +759,7 @@ function renderCountries() {
             const stale = cMonth && cMonth !== latestM;
             const staleBadge = stale
               ? `<span class="pill pill-amber" style="margin-left:8px" title="GACC's ${latestM} 2026 by-country bulletin didn't include ${t.key}. Value below is through ${cMonth} 2026.">Last updated ${cMonth} 2026</span>` : "";
+            const share = shareOfChina(c, "2026", cMonth);
             return `
               <tr class="row-link" onclick="window.location.hash='#/country/${encodeURIComponent(t.key)}'">
                 <td>${t.flag} <b>${t.key}</b> <span style="color:var(--muted); font-size:12px">${t.region}</span>${staleBadge}</td>
@@ -750,6 +768,8 @@ function renderCountries() {
                 <td class="num ${trendClass(yoy25)}">${pct(yoy25)}</td>
                 <td class="num">${usd(v26)}</td>
                 <td class="num ${trendClass(yoy26)}">${pct(yoy26)}</td>
+                <td class="num">${share.exp != null ? share.exp.toFixed(2) + "%" : "—"}</td>
+                <td class="num">${share.imp != null ? share.imp.toFixed(2) + "%" : "—"}</td>
               </tr>
             `;
           }).join("")}
@@ -769,11 +789,15 @@ function renderCountries() {
             <th class="num">Exports</th>
             <th class="num">Imports</th>
             <th class="num">YTD YoY</th>
+            <th class="num">% China exports</th>
+            <th class="num">% China imports</th>
             <th>Through</th>
           </tr>
         </thead>
         <tbody>
-          ${others.slice(0, 60).map(({row, month}, i) => `
+          ${others.slice(0, 60).map(({row, month}, i) => {
+            const share = shareOfChina(row, "2026", month);
+            return `
             <tr>
               <td>${i+1}</td>
               <td>${row.name}</td>
@@ -781,11 +805,14 @@ function renderCountries() {
               <td class="num">${usd(row.exports_ytd)}</td>
               <td class="num">${usd(row.imports_ytd)}</td>
               <td class="num ${trendClass(row.pct_total_yoy)}">${pct(row.pct_total_yoy)}</td>
+              <td class="num">${share.exp != null ? share.exp.toFixed(2) + "%" : "—"}</td>
+              <td class="num">${share.imp != null ? share.imp.toFixed(2) + "%" : "—"}</td>
               <td>${month === newestMonth
                     ? `<span class="pill pill-green">${month}</span>`
                     : `<span class="pill pill-amber">${month}</span>`}</td>
             </tr>
-          `).join("")}
+            `;
+          }).join("")}
         </tbody>
       </table>
     </div>
@@ -860,6 +887,24 @@ function renderCountry(key) {
         <div class="kpi-detail">Exp ${usd(c?.exports_month)} · Imp ${usd(c?.imports_month)}</div>
       </div>
     </div>
+
+    ${(() => {
+      const share = shareOfChina(c, "2026", cMonth);
+      return `
+      <div class="kpi-grid" style="margin-top:-8px">
+        <div class="kpi">
+          <div class="kpi-label">Share of China's total exports (2026 YTD)</div>
+          <div class="kpi-value">${share.exp != null ? share.exp.toFixed(2) + "%" : "—"}</div>
+          <div class="kpi-detail">${usd(c?.exports_ytd)} of ${usd(findRow(DATA.by_country["2026"][cMonth], "TOTAL")?.exports_ytd)}</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Share of China's total imports (2026 YTD)</div>
+          <div class="kpi-value">${share.imp != null ? share.imp.toFixed(2) + "%" : "—"}</div>
+          <div class="kpi-detail">${usd(c?.imports_ytd)} of ${usd(findRow(DATA.by_country["2026"][cMonth], "TOTAL")?.imports_ytd)}</div>
+        </div>
+      </div>
+      `;
+    })()}
 
     <div class="card">
       <div class="card-header">
